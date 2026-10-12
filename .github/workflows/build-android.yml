@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Vérifier le zip et le décompresser
+      - name: Décompresser le projet et vérifier son contenu
         run: |
           ZIP="$(ls *.zip 2>/dev/null | head -n 1)"
           if [ -z "$ZIP" ]; then
@@ -31,9 +31,10 @@ jobs:
           echo "Archive utilisée : $ZIP"
           unzip -q -o "$ZIP"
           cp -r code_route_fr/. .
-          echo "Fichiers à la racine :"
-          ls
-          ls lib scripts
+          echo "Images : $(ls assets/images | wc -l) (attendu : 87)"
+          echo "Banques de questions :"
+          ls assets/questions
+          echo "Achat simulé présent dans main.dart : $(grep -c FAKE_PURCHASE lib/main.dart) (attendu : 2 ou plus)"
 
       - uses: actions/setup-java@v4
         with:
@@ -50,7 +51,36 @@ jobs:
           APP_ID: ${{ inputs.app_id }}
           APP_LABEL: ${{ inputs.app_label }}
           ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
-        run: bash scripts/prepare_android.sh
+        run: |
+          set -euo pipefail
+          [ -n "${ADMOB_APP_ID:-}" ] || ADMOB_APP_ID="ca-app-pub-3940256099942544~3347511713"
+          export ADMOB_APP_ID
+          ORG="${APP_ID%.*}"
+          NAME="${APP_ID##*.}"
+          echo "Identifiant de l'application : $APP_ID"
+          TMP="$(mktemp -d)"
+          flutter create --org "$ORG" --project-name "$NAME" --platforms=android "$TMP/app" > /dev/null
+          rm -rf android
+          cp -r "$TMP/app/android" android
+          python3 - <<'PY'
+          import os, re
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          label = os.environ["APP_LABEL"]
+          admob = os.environ["ADMOB_APP_ID"]
+          s = re.sub(r'android:label="[^"]*"', lambda m: 'android:label="' + label + '"', s, count=1)
+          if "android.permission.INTERNET" not in s:
+              s = s.replace("<application", '<uses-permission android:name="android.permission.INTERNET"/>\n    <application', 1)
+          if "com.google.android.gms.ads.APPLICATION_ID" not in s:
+              m = re.search(r"<application[^>]*>", s)
+              meta = '\n        <meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="' + admob + '"/>'
+              s = s[:m.end()] + meta + s[m.end():]
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+          for f in android/app/build.gradle android/app/build.gradle.kts; do
+            [ -f "$f" ] && sed -i -E 's/minSdk(Version)?[[:space:]]*=?[[:space:]]*flutter\.minSdkVersion/minSdk = 23/' "$f" || true
+          done
+          echo "Projet Android prêt."
 
       - name: Dépendances
         run: flutter pub get
@@ -70,9 +100,11 @@ jobs:
           KEY_PASS: ${{ secrets.UPLOAD_KEY_PASSWORD }}
         run: |
           echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
-          KEYSTORE="$RUNNER_TEMP/upload.jks" bash scripts/sign_aab.sh \
-            build/app/outputs/bundle/release/app-release.aab \
-            build/app/outputs/bundle/release/app-release-signed.aab
+          IN=build/app/outputs/bundle/release/app-release.aab
+          OUT=build/app/outputs/bundle/release/app-release-signed.aab
+          cp "$IN" "$OUT"
+          zip -q -d "$OUT" 'META-INF/*' || true
+          jarsigner -keystore "$RUNNER_TEMP/upload.jks" -storepass "$STORE_PASS" -keypass "$KEY_PASS" -sigalg SHA256withRSA -digestalg SHA-256 "$OUT" "$KEY_ALIAS"
 
       - uses: actions/upload-artifact@v4
         with:
