@@ -1,0 +1,27 @@
+name: code_route_fr
+description: Entraînement et examens blancs du code de la route (France).
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_svg: ^2.0.10+1
+  google_mobile_ads: ^5.1.0
+  in_app_purchase: ^3.2.0
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/countries.json
+    - assets/questions/
+    - assets/images/

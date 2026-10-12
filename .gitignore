@@ -1,0 +1,7 @@
+build/
+.dart_tool/
+android/
+ios/
+*.jks
+*.base64.txt
+key.properties
