@@ -29,8 +29,7 @@ jobs:
           done
           if [ -z "$ZIP" ]; then
             echo "ERREUR : aucun zip de la racine ne contient la version récente (assets/questions/jp.json)."
-            echo "Zips trouvés :"; ls -la *.zip
-            echo "Supprimez l'ancien zip, téléchargez à nouveau l'archive depuis la conversation, puis envoyez-la."
+            ls -la *.zip
             exit 1
           fi
           echo "Archive utilisée : $ZIP"
@@ -38,9 +37,7 @@ jobs:
           unzip -q -o "$ZIP"
           cp -r code_route_fr/. .
           echo "Images : $(ls assets/images | wc -l) (attendu : 87)"
-          echo "Banques de questions :"
           ls assets/questions
-          echo "Achat simulé présent dans main.dart : $(grep -c FAKE_PURCHASE lib/main.dart) (attendu : 2 ou plus)"
 
       - uses: actions/setup-java@v4
         with:
@@ -64,6 +61,7 @@ jobs:
           ORG="${APP_ID%.*}"
           NAME="${APP_ID##*.}"
           echo "Identifiant de l'application : $APP_ID"
+          echo "Identifiant AdMob utilisé : $ADMOB_APP_ID"
           TMP="$(mktemp -d)"
           flutter create --org "$ORG" --project-name "$NAME" --platforms=android "$TMP/app" > /dev/null
           rm -rf android
@@ -86,7 +84,8 @@ jobs:
           for f in android/app/build.gradle android/app/build.gradle.kts; do
             [ -f "$f" ] && sed -i -E 's/minSdk(Version)?[[:space:]]*=?[[:space:]]*flutter\.minSdkVersion/minSdk = 23/' "$f" || true
           done
-          echo "Projet Android prêt."
+          echo "----- Manifeste Android obtenu -----"
+          cat android/app/src/main/AndroidManifest.xml
 
       - name: Dépendances
         run: |
@@ -99,6 +98,49 @@ jobs:
 
       - name: AAB pour le Play Store
         run: flutter build appbundle --release --dart-define=ADMOB_INTERSTITIAL_ID="$ADMOB_INTERSTITIAL_ID"
+
+      - name: Préparer le test de lancement
+        run: |
+          cat > diag.sh <<'EOF'
+          adb install -r build/app/outputs/flutter-apk/app-release.apk
+          adb logcat -c
+          adb shell monkey -p "$APP_ID" -c android.intent.category.LAUNCHER 1
+          sleep 25
+          adb logcat -d > logcat.txt
+          echo "===== L'application tourne-t-elle encore ? ====="
+          adb shell pidof "$APP_ID" || echo "NON : l'application s'est fermée."
+          echo "===== Plantage (FATAL EXCEPTION) ====="
+          grep -n -A 25 "FATAL EXCEPTION" logcat.txt | head -80
+          echo "===== Autres signaux de fermeture ====="
+          grep -E "has died|Force finishing|Fatal signal|SIGSEGV" logcat.txt | head -20
+          echo "===== Messages flutter et publicités ====="
+          grep -E "flutter|GoogleMobileAds|MobileAds|Ads" logcat.txt | tail -60
+          EOF
+
+      - name: Activer KVM pour l'émulateur
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Tester le lancement de l'APK sur un téléphone virtuel
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APP_ID: ${{ inputs.app_id }}
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          script: bash diag.sh
+
+      - name: Sauvegarder le journal du test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcat
+          path: logcat.txt
+          if-no-files-found: ignore
 
       - name: Signer l'AAB avec votre clé d'envoi
         if: env.HAS_KEYSTORE == 'true'
