@@ -21,17 +21,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Vérifier le zip et le décompresser
+            - name: Vérifier le zip et le décompresser
         run: |
-          echo "Contenu de la racine du dépôt :"
-          ls -la
-          if [ ! -f code_route_fr.zip ]; then
-            echo "ERREUR : code_route_fr.zip est absent de la racine du dépôt."
+          ZIP="$(ls *.zip 2>/dev/null | head -n 1)"
+          if [ -z "$ZIP" ]; then
+            echo "ERREUR : aucun fichier .zip à la racine du dépôt."
             exit 1
           fi
-          unzip -q -o code_route_fr.zip
-          echo "Projet décompressé :"
-          ls code_route_fr code_route_fr/lib
+          echo "Archive utilisée : $ZIP"
+          unzip -q -o "$ZIP"
+          cp -r code_route_fr/. .
+          echo "Fichiers à la racine :"
+          ls
+          ls lib scripts
 
       - uses: actions/setup-java@v4
         with:
