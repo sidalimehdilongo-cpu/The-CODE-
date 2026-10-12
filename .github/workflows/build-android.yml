@@ -23,12 +23,18 @@ jobs:
 
       - name: Décompresser le projet et vérifier son contenu
         run: |
-          ZIP="$(ls *.zip 2>/dev/null | head -n 1)"
+          ZIP=""
+          for z in *.zip; do
+            if unzip -l "$z" | grep -q "assets/questions/jp.json"; then ZIP="$z"; fi
+          done
           if [ -z "$ZIP" ]; then
-            echo "ERREUR : aucun fichier .zip à la racine du dépôt."
+            echo "ERREUR : aucun zip de la racine ne contient la version récente (assets/questions/jp.json)."
+            echo "Zips trouvés :"; ls -la *.zip
+            echo "Supprimez l'ancien zip, téléchargez à nouveau l'archive depuis la conversation, puis envoyez-la."
             exit 1
           fi
           echo "Archive utilisée : $ZIP"
+          rm -rf assets lib code_route_fr
           unzip -q -o "$ZIP"
           cp -r code_route_fr/. .
           echo "Images : $(ls assets/images | wc -l) (attendu : 87)"
