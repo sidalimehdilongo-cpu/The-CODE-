@@ -1,0 +1,85 @@
+name: Build Android (APK de test + AAB Play Store)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: "Identifiant unique de l'application (ex. com.monnom.coderoute)"
+        required: true
+        default: "com.yourname.coderoute"
+      app_label:
+        description: "Nom affiché sous l'icône"
+        required: true
+        default: "Code de la route"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.UPLOAD_KEYSTORE_BASE64 != '' }}
+      ADMOB_INTERSTITIAL_ID: ${{ secrets.ADMOB_INTERSTITIAL_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier le zip et le décompresser
+        run: |
+          echo "Contenu de la racine du dépôt :"
+          ls -la
+          if [ ! -f code_route_fr.zip ]; then
+            echo "ERREUR : code_route_fr.zip est absent de la racine du dépôt."
+            exit 1
+          fi
+          unzip -q -o code_route_fr.zip
+          echo "Projet décompressé :"
+          ls code_route_fr code_route_fr/lib
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Préparer le projet Android
+        working-directory: code_route_fr
+        env:
+          APP_ID: ${{ inputs.app_id }}
+          APP_LABEL: ${{ inputs.app_label }}
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+        run: bash scripts/prepare_android.sh
+
+      - name: Dépendances
+        working-directory: code_route_fr
+        run: flutter pub get
+
+      - name: APK de test
+        working-directory: code_route_fr
+        run: flutter build apk --release --dart-define=FAKE_PURCHASE=true --dart-define=ADMOB_INTERSTITIAL_ID="$ADMOB_INTERSTITIAL_ID"
+
+      - name: AAB pour le Play Store
+        working-directory: code_route_fr
+        run: flutter build appbundle --release --dart-define=ADMOB_INTERSTITIAL_ID="$ADMOB_INTERSTITIAL_ID"
+
+      - name: Signer l'AAB avec votre clé d'envoi
+        if: env.HAS_KEYSTORE == 'true'
+        working-directory: code_route_fr
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          STORE_PASS: ${{ secrets.UPLOAD_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: |
+          echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          KEYSTORE="$RUNNER_TEMP/upload.jks" bash scripts/sign_aab.sh \
+            build/app/outputs/bundle/release/app-release.aab \
+            build/app/outputs/bundle/release/app-release-signed.aab
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-builds
+          path: |
+            code_route_fr/build/app/outputs/flutter-apk/app-release.apk
+            code_route_fr/build/app/outputs/bundle/release/app-release-signed.aab
