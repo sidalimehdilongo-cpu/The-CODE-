@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-            - name: Vérifier le zip et le décompresser
+      - name: Vérifier le zip et le décompresser
         run: |
           ZIP="$(ls *.zip 2>/dev/null | head -n 1)"
           if [ -z "$ZIP" ]; then
@@ -46,7 +46,6 @@ jobs:
           cache: true
 
       - name: Préparer le projet Android
-        working-directory: code_route_fr
         env:
           APP_ID: ${{ inputs.app_id }}
           APP_LABEL: ${{ inputs.app_label }}
@@ -54,20 +53,16 @@ jobs:
         run: bash scripts/prepare_android.sh
 
       - name: Dépendances
-        working-directory: code_route_fr
         run: flutter pub get
 
       - name: APK de test
-        working-directory: code_route_fr
         run: flutter build apk --release --dart-define=FAKE_PURCHASE=true --dart-define=ADMOB_INTERSTITIAL_ID="$ADMOB_INTERSTITIAL_ID"
 
       - name: AAB pour le Play Store
-        working-directory: code_route_fr
         run: flutter build appbundle --release --dart-define=ADMOB_INTERSTITIAL_ID="$ADMOB_INTERSTITIAL_ID"
 
       - name: Signer l'AAB avec votre clé d'envoi
         if: env.HAS_KEYSTORE == 'true'
-        working-directory: code_route_fr
         env:
           UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
           KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
@@ -83,5 +78,5 @@ jobs:
         with:
           name: android-builds
           path: |
-            code_route_fr/build/app/outputs/flutter-apk/app-release.apk
-            code_route_fr/build/app/outputs/bundle/release/app-release-signed.aab
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release-signed.aab
