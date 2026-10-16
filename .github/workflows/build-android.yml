@@ -94,6 +94,38 @@ jobs:
           echo "----- Manifeste Android obtenu -----"
           cat android/app/src/main/AndroidManifest.xml
 
+      - name: Desactiver la reduction de code R8 (cause du plantage)
+        run: |
+          python3 - <<'PY'
+          import re, os
+          done = False
+          for f in ("android/app/build.gradle.kts", "android/app/build.gradle"):
+              if not os.path.exists(f):
+                  continue
+              s = open(f, encoding="utf-8").read()
+              kts = f.endswith(".kts")
+              if kts:
+                  ins = '\n            isMinifyEnabled = false\n            isShrinkResources = false\n            proguardFiles("proguard-rules.pro")'
+              else:
+                  ins = "\n            minifyEnabled false\n            shrinkResources false\n            proguardFiles 'proguard-rules.pro'"
+              pat = r'(buildTypes\s*\{.*?(?:getByName\("release"\)|release)\s*\{)'
+              s2, n = re.subn(pat, lambda m: m.group(1) + ins, s, count=1, flags=re.S)
+              if n:
+                  open(f, "w", encoding="utf-8").write(s2)
+                  done = True
+              print(f, "modifie" if n else "motif introuvable")
+              print(s2)
+          if not done:
+              print("ATTENTION : impossible de desactiver R8 automatiquement")
+          PY
+          cat > android/app/proguard-rules.pro <<'EOF'
+          -keep class * extends androidx.room.RoomDatabase { <init>(); }
+          -keep class androidx.work.** { *; }
+          -keep class androidx.room.** { *; }
+          -dontwarn androidx.work.**
+          EOF
+          printf '\nandroid.enableR8.fullMode=false\n' >> android/gradle.properties
+
       - name: Dépendances
         run: |
           flutter pub add google_mobile_ads:^9.1.0
