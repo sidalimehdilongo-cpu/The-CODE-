@@ -96,4 +96,88 @@ jobs:
 
       - name: Dépendances
         run: |
-          sed -i -E 's/google_mobile_ads:
+          flutter pub add google_mobile_ads:^9.1.0
+          grep -n "google_mobile_ads" pubspec.yaml
+          flutter pub get
+
+      - name: Verifier l'identifiant de bloc interstitiel
+        run: |
+          ID="$(printf '%s' "${ADMOB_INTERSTITIAL_ID:-}" | tr -d '[:space:]"\047')"
+          if printf '%s' "$ID" | grep -Eq '^ca-app-pub-[0-9]{16}/[0-9]{10}$'; then
+            echo "Bloc interstitiel valide : $ID"
+          else
+            echo "ATTENTION : ADMOB_INTERSTITIAL_ID absent ou invalide. Bloc de test Google utilise."
+            ID=""
+          fi
+          echo "AD_UNIT=$ID" >> "$GITHUB_ENV"
+
+      - name: APK de test
+        run: flutter build apk --release --no-shrink --dart-define=FAKE_PURCHASE=true --dart-define=ADMOB_INTERSTITIAL_ID="$AD_UNIT"
+
+      - name: AAB pour le Play Store
+        run: flutter build appbundle --release --dart-define=ADMOB_INTERSTITIAL_ID="$AD_UNIT"
+
+      - name: Préparer le test de lancement
+        run: |
+          cat > diag.sh <<'EOF'
+          adb install -r build/app/outputs/flutter-apk/app-release.apk
+          adb logcat -c
+          adb shell monkey -p "$APP_ID" -c android.intent.category.LAUNCHER 1
+          sleep 25
+          adb logcat -d > logcat.txt
+          echo "===== L'application tourne-t-elle encore ? ====="
+          adb shell pidof "$APP_ID" || echo "NON : l'application s'est fermée."
+          echo "===== Plantage (FATAL EXCEPTION) ====="
+          grep -n -A 25 "FATAL EXCEPTION" logcat.txt | head -80
+          echo "===== Autres signaux de fermeture ====="
+          grep -E "has died|Force finishing|Fatal signal|SIGSEGV" logcat.txt | head -20
+          echo "===== Messages flutter et publicités ====="
+          grep -E "flutter|GoogleMobileAds|MobileAds|Ads" logcat.txt | tail -60
+          EOF
+
+      - name: Activer KVM pour l'émulateur
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Tester le lancement de l'APK sur un téléphone virtuel
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APP_ID: ${{ inputs.app_id }}
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          script: bash diag.sh
+
+      - name: Sauvegarder le journal du test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcat
+          path: logcat.txt
+          if-no-files-found: ignore
+
+      - name: Signer l'AAB avec votre clé d'envoi
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.UPLOAD_KEY_ALIAS }}
+          STORE_PASS: ${{ secrets.UPLOAD_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.UPLOAD_KEY_PASSWORD }}
+        run: |
+          echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          IN=build/app/outputs/bundle/release/app-release.aab
+          OUT=build/app/outputs/bundle/release/app-release-signed.aab
+          cp "$IN" "$OUT"
+          zip -q -d "$OUT" 'META-INF/*' || true
+          jarsigner -keystore "$RUNNER_TEMP/upload.jks" -storepass "$STORE_PASS" -keypass "$KEY_PASS" -sigalg SHA256withRSA -digestalg SHA-256 "$OUT" "$KEY_ALIAS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-builds
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release-signed.aab
